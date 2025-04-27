@@ -1,0 +1,120 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Users {
+  userId           String     @id @default(uuid())
+  username         String     @db.VarChar(255)
+  email            String     @unique
+  password         String     @db.VarChar(255)
+  otp              String?    @db.VarChar(10)
+  resetToken       String?
+  resetTokenExpiry DateTime?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  profilePicture   String?
+  cart             Cart?
+  favorites        Favorites?
+  orders           Orders[]
+}
+
+model Cart {
+  cartId       String         @id @default(cuid())
+  ownerId      String         @unique
+  owner        Users          @relation(fields: [ownerId], references: [userId])
+  cartProducts CartProducts[]
+}
+
+model CartProducts {
+  id        String   @id @default(cuid())
+  cartId    String
+  productId String
+  quantity  Int      @default(1)
+  cart      Cart     @relation(fields: [cartId], references: [cartId])
+  product   Products @relation(fields: [productId], references: [prodId], onDelete: Cascade)
+
+  @@unique([cartId, productId])
+}
+
+model Products {
+  prodId          String          @id @default(cuid())
+  prodName        String          @db.VarChar(255)
+  prodDescription String
+  price           Int
+  gender          Gender
+  category        String          @db.VarChar(255)
+  stock           Int             @default(0)
+  popular         Boolean         @default(false)
+  cartProducts    CartProducts[]
+  favProducts     FavProducts[]
+  orderItems      OrderItem[]
+  images          ProductImages[]
+}
+
+model ProductImages {
+  imageId   String   @id @default(cuid())
+  productId String
+  imageUrl  String
+  isMain    Boolean  @default(false)
+  position  Int      @default(0)
+  product   Products @relation(fields: [productId], references: [prodId], onDelete: Cascade)
+}
+
+model Orders {
+  orderId        String      @id @default(cuid())
+  ordererId      String
+  address        String      @db.VarChar(255)
+  phoneNo        String      @db.VarChar(15)
+  paymentMethod  String      @db.VarChar(255)
+  price          Decimal     @db.Decimal(10, 2)
+  approved       Boolean     @default(false)
+  orderDate      String?
+  transactionUrl String?
+  orderItems     OrderItem[]
+  orderer        Users       @relation(fields: [ordererId], references: [userId])
+}
+
+model OrderItem {
+  id        String   @id @default(cuid())
+  orderId   String
+  productId String
+  quantity  Int      @default(1)
+  order     Orders   @relation(fields: [orderId], references: [orderId])
+  product   Products @relation(fields: [productId], references: [prodId], onDelete: Cascade)
+
+  @@unique([orderId, productId])
+}
+
+model Favorites {
+  favId       String        @id @default(cuid())
+  userId      String        @unique
+  favProducts FavProducts[]
+  user        Users         @relation(fields: [userId], references: [userId])
+}
+
+model FavProducts {
+  id        String    @id @default(cuid())
+  favId     String
+  productId String
+  quantity  Int       @default(1)
+  favorite  Favorites @relation(fields: [favId], references: [favId])
+  product   Products  @relation(fields: [productId], references: [prodId], onDelete: Cascade)
+
+  @@unique([favId, productId])
+}
+
+model Subscription {
+  subscriptionId String @id @default(uuid())
+  email          String @unique @db.VarChar(255)
+}
+
+enum Gender {
+  Male
+  Female
+  Unisex
+}
