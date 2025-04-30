@@ -1,12 +1,14 @@
 const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
-
 exports.addOffer = async (req, res) => {
-  const { orderData, paymentMethod, transactionUrl, userId } = req.body;
+  const { orderData, userId } = req.body;
   const {
     phoneNo,
-    price,
     address,
+    street,
+    latitude,
+    longitude,
+    mapAddress,
     products: orderProducts,
     orderDate,
   } = orderData;
@@ -15,10 +17,10 @@ exports.addOffer = async (req, res) => {
     if (
       !userId ||
       !phoneNo ||
-      !paymentMethod ||
-      !transactionUrl ||
-      !price ||
       !address ||
+      !latitude ||
+      !longitude ||
+      !street ||
       !orderProducts ||
       !Array.isArray(orderProducts) ||
       orderProducts.length === 0
@@ -26,35 +28,42 @@ exports.addOffer = async (req, res) => {
       throw new Error("Missing or invalid details!");
     }
 
+    // Phone number validation
+    if (!/^\+?[0-9]{10,15}$/.test(phoneNo)) {
+      throw new Error("Invalid phone number format");
+    }
+
+    if (
+      latitude < -90 ||
+      latitude > 90 ||
+      longitude < -180 ||
+      longitude > 180
+    ) {
+      throw new Error("Invalid coordinates");
+    }
+
+    // Address and street validation
+    if (address.length > 255) {
+      throw new Error("Address is too long");
+    }
+
+    if (street && street.length > 255) {
+      throw new Error("Street information is too long");
+    }
+
+    // Validate products
     const validProducts = orderProducts.filter(
       (product) => product.productId && product.quantity
     );
+
     if (validProducts.length !== orderProducts.length) {
       throw new Error(
         "All product entries must have valid productId and quantity."
       );
     }
 
-    const newOrder = await prisma.orders.create({
-      data: {
-        ordererId: userId,
-        address,
-        phoneNo,
-        paymentMethod,
-        price,
-        orderDate: orderDate,
-        transactionUrl: transactionUrl,
-        orderItems: {
-          create: validProducts.map((item) => ({
-            productId: item.productId,
-            quantity: item.quantity,
-          })),
-        },
-      },
-      include: { orderItems: true },
-    });
-
-    for (const item of orderProducts) {
+    // Validate stock availability — DO NOT REDUCE STOCK YET
+    for (const item of validProducts) {
       const product = await prisma.products.findUnique({
         where: { prodId: item.productId },
       });
@@ -62,74 +71,100 @@ exports.addOffer = async (req, res) => {
       if (!product) {
         throw new Error(`Product with ID ${item.productId} not found.`);
       }
-      
-      console.log("product.stock", product.stock);
-      console.log("item.quantity", item.quantity);
+
       if (product.stock < item.quantity) {
         throw new Error(
-          `Not enough stock for product: ${product.name}. Available: ${product.stock}`
+          `Not enough stock for product: ${product.prodName}. Available: ${product.stock}`
         );
       }
-
-      await prisma.products.update({
-        where: { prodId: item.productId },
-        data: { stock: product.stock - item.quantity },
-      });
     }
-    return res
-      .status(201)
-      .json({ message: "Order placed successfully", order: newOrder });
+
+    // Create order with PENDING payment and status
+    const newOrder = await prisma.orders.create({
+      data: {
+        ordererId: userId,
+        address,
+        phoneNo,
+        orderDate,
+        latitude,
+        mapAddress,
+        longitude,
+        street,
+        orderStatus: "PENDING",
+        paymentStatus: "PENDING",
+        orderItems: {
+          create: validProducts.map((item) => ({
+            productId: item.productId,
+            quantity: item.quantity,
+          })),
+        },
+      },
+      include: {
+        orderItems: {
+          include: {
+            product: true,
+          },
+        },
+      },
+    });
+
+    return res.status(201).json({
+      message: "Order placed successfully. Awaiting payment.",
+      order: newOrder,
+    });
   } catch (e) {
     console.error(e);
     return res.status(400).json({ error: e.message || "Something went wrong" });
   }
 };
 
-// exports.getOffer = async (req, res) => {
-//   const userId = req.query.userId;
-//   try {
-//     const userOrders = await prisma.orders.findMany({
-//       where: { ordererId: userId },
-//       include: { orderItems: true }, // Ensure orderItems are fetched with order details
-//     });
-//     if (userOrders.length === 0) {
-//       throw new Error("No orders found for the user");
-//     }
-//     return res.status(200).json({ orders: userOrders });
-//   } catch (e) {
-//     console.error(e);
-//     return res.status(400).json({ error: e.message || "Something went wrong" });
-//   }
-// };
-
 exports.getOffer = async (req, res) => {
   const userId = req.query.userId;
   try {
     const userOrders = await prisma.orders.findMany({
       where: { ordererId: userId },
-      include: { orderItems: true },
+      include: {
+        orderItems: {
+          include: {
+            product: true,
+          },
+        },
+        transaction: true,
+      },
     });
 
     // Segment orders by status
-    const pending = userOrders.filter(order => order.approved === false);
-    const approved = userOrders.filter(order => order.approved === true);
+    const pending = userOrders.filter(
+      (order) => order.paymentStatus === "PENDING"
+    );
+    const paid = userOrders.filter((order) => order.paymentStatus === "PAID");
 
     // Segment by region (assuming address format is 'Region - ...')
-    const kigali = userOrders.filter(order => order.address.startsWith('Kigali'));
-    const north = userOrders.filter(order => order.address.startsWith('Northern'));
-    const south = userOrders.filter(order => order.address.startsWith('Southern'));
-    const east = userOrders.filter(order => order.address.startsWith('Eastern'));
-    const west = userOrders.filter(order => order.address.startsWith('Western'));
+    const kigali = userOrders.filter((order) =>
+      order.address.startsWith("Kigali")
+    );
+    const north = userOrders.filter((order) =>
+      order.address.startsWith("Northern")
+    );
+    const south = userOrders.filter((order) =>
+      order.address.startsWith("Southern")
+    );
+    const east = userOrders.filter((order) =>
+      order.address.startsWith("Eastern")
+    );
+    const west = userOrders.filter((order) =>
+      order.address.startsWith("Western")
+    );
 
     return res.status(200).json({
       orders: userOrders,
       pending,
-      approved,
-      kigali,
-      north,
-      south,
-      east,
-      west
+      paid,
+      // kigali,
+      // north,
+      // south,
+      // east,
+      // west,
     });
   } catch (e) {
     console.error(e);

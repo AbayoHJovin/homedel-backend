@@ -1,5 +1,6 @@
 generator client {
   provider = "prisma-client-js"
+  // output   = "./generated/prisma-client"
 }
 
 datasource db {
@@ -8,18 +9,17 @@ datasource db {
 }
 
 model Users {
-  userId           String     @id @default(uuid())
-  username         String     @db.VarChar(255)
-  email            String     @unique
-  password         String     @db.VarChar(255)
-  otp              String?    @db.VarChar(10)
+  userId           String    @id @default(uuid())
+  username         String    @db.VarChar(255)
+  email            String    @unique
+  password         String    @db.VarChar(255)
+  otp              String?   @db.VarChar(10)
   resetToken       String?
   resetTokenExpiry DateTime?
-  createdAt        DateTime   @default(now())
-  updatedAt        DateTime   @updatedAt
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
   profilePicture   String?
   cart             Cart?
-  favorites        Favorites?
   orders           Orders[]
 }
 
@@ -51,7 +51,6 @@ model Products {
   stock           Int             @default(0)
   popular         Boolean         @default(false)
   cartProducts    CartProducts[]
-  favProducts     FavProducts[]
   orderItems      OrderItem[]
   images          ProductImages[]
 }
@@ -66,17 +65,32 @@ model ProductImages {
 }
 
 model Orders {
-  orderId        String      @id @default(cuid())
-  ordererId      String
-  address        String      @db.VarChar(255)
-  phoneNo        String      @db.VarChar(15)
-  paymentMethod  String      @db.VarChar(255)
-  price          Decimal     @db.Decimal(10, 2)
-  approved       Boolean     @default(false)
-  orderDate      String?
-  transactionUrl String?
-  orderItems     OrderItem[]
-  orderer        Users       @relation(fields: [ordererId], references: [userId])
+  orderId       String             @id @default(cuid())
+  ordererId     String
+  address       String             @db.VarChar(255)
+  phoneNo       String             @db.VarChar(15)
+  approved      Boolean            @default(false)
+  orderDate     String?
+  latitude      Float?
+  longitude     Float?
+  street        String?            @db.VarChar(255)
+  orderStatus   OrderStatus        @default(PENDING)
+  mapAddress    String?
+  paymentStatus OrderPaymentStatus @default(PENDING)
+  orderItems    OrderItem[]
+  transaction   OrderTransaction?
+  orderer       Users              @relation(fields: [ordererId], references: [userId])
+}
+
+model OrderTransaction {
+  transactionId   String   @id @default(cuid())
+  orderId         String   @unique
+  phoneNo         String   @db.VarChar(15)
+  amount          Decimal  @db.Decimal(10, 2)
+  paymentMethod   String   @db.VarChar(255)
+  transactionDate DateTime @default(now())
+  transactionUrl  String?
+  order           Orders   @relation(fields: [orderId], references: [orderId])
 }
 
 model OrderItem {
@@ -90,24 +104,6 @@ model OrderItem {
   @@unique([orderId, productId])
 }
 
-model Favorites {
-  favId       String        @id @default(cuid())
-  userId      String        @unique
-  favProducts FavProducts[]
-  user        Users         @relation(fields: [userId], references: [userId])
-}
-
-model FavProducts {
-  id        String    @id @default(cuid())
-  favId     String
-  productId String
-  quantity  Int       @default(1)
-  favorite  Favorites @relation(fields: [favId], references: [favId])
-  product   Products  @relation(fields: [productId], references: [prodId], onDelete: Cascade)
-
-  @@unique([favId, productId])
-}
-
 model Subscription {
   subscriptionId String @id @default(uuid())
   email          String @unique @db.VarChar(255)
@@ -117,4 +113,16 @@ enum Gender {
   Male
   Female
   Unisex
+}
+
+enum OrderPaymentStatus {
+  PENDING
+  PAID
+}
+
+enum OrderStatus {
+  PENDING
+  DELIVERING
+  DELIVERED
+  CANCELLED
 }

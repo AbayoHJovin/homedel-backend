@@ -45,6 +45,18 @@ exports.signupUser = async (req, res) => {
     });
   }
 };
+function sanitizeUser(user) {
+  const {
+    password,
+    otp,
+    resetToken,
+    resetTokenExpiry,
+    cart,
+    orders,
+    ...safeUser
+  } = user;
+  return safeUser;
+}
 
 exports.loginUser = async (req, res) => {
   const { email, password } = req.body;
@@ -61,11 +73,12 @@ exports.loginUser = async (req, res) => {
     if (user.email === process.env.AD_EMAIL) {
       isAdmin = true;
     }
+    const safeUser = sanitizeUser(user);
     const accessToken = createAccessToken(user.userId);
     const refreshToken = createRefreshToken(user.userId);
     user.refreshToken = refreshToken;
     sendRefreshToken(res, refreshToken);
-    sendAccessToken(req, res, accessToken, isAdmin);
+    sendAccessToken(req, res, accessToken, isAdmin,safeUser);
     return;
   } catch (err) {
     res.status(500).json({ message: err.message || "Internal server error" });

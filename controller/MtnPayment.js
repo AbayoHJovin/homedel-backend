@@ -2,11 +2,14 @@ const axios = require("axios");
 const { v4: uuidv4 } = require("uuid");
 const dotenv = require("dotenv");
 const changeFormatAndPushToCloudinary = require("./functions/changeFormat");
+const { PrismaClient } = require("@prisma/client");
 
 dotenv.config();
 
 const subscriptionKey = process.env.SUBSCRIPTION_KEY;
 const callbackHost = process.env.CALLBACK_URL;
+
+const prisma = new PrismaClient();
 
 if (!subscriptionKey) {
   throw new Error(
@@ -113,13 +116,54 @@ const requestToPay = async (req, res) => {
   }
 
   try {
-    const { amount, phoneNumber } = req.body;
-    if (!amount || !phoneNumber) {
+    const { amount, phoneNumber, orderId } = req.body;
+    if (!amount || !phoneNumber || !orderId) {
       return res.status(400).json({
         success: false,
-        error: "Please provide amount and phoneNumber",
+        error: "Please provide amount, phoneNumber, and orderId",
       });
     }
+
+    // Check if order exists and get its details
+    const order = await prisma.orders.findUnique({
+      where: { orderId },
+      include: {
+        transaction: true,
+        orderItems: {
+          include: {
+            product: true,
+          },
+        },
+      },
+    });
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        error:
+          "Order not found. Cannot process payment for non-existent order.",
+      });
+    }
+
+    // Check if transaction already exists
+    if (order.transasction) {
+      return res.status(400).json({
+        success: false,
+        error: "This order already has a transaction.",
+      });
+    }
+
+    // Validate stock availability again before payment
+    for (const item of order.orderItems) {
+      const product = item.product;
+      if (product.stock < item.quantity) {
+        return res.status(400).json({
+          success: false,
+          error: `Not enough stock for product: ${product.prodName}. Available: ${product.stock}`,
+        });
+      }
+    }
+
     const xReferenceId = uuidv4();
     const payload = {
       amount,
@@ -143,9 +187,10 @@ const requestToPay = async (req, res) => {
       payload,
       { headers }
     );
+
     if (response.status === 202) {
       console.log("Request accepted. Querying payment status...");
-      let statusResponse; // Declare the variable outside the if block
+      let statusResponse;
       try {
         statusResponse = await axios.get(
           `https://sandbox.momodeveloper.mtn.com/collection/v1_0/requesttopay/${xReferenceId}`,
@@ -158,14 +203,54 @@ const requestToPay = async (req, res) => {
           error: statusError.response?.data || statusError.message,
         });
       }
+
       const result = await changeFormatAndPushToCloudinary(
         statusResponse?.data,
         "MTN"
       );
+
+      // Create transaction record and update order status
+      const transaction = await prisma.$transaction(async (prisma) => {
+        // Create transaction
+        const newTransaction = await prisma.orderTransaction.create({
+          data: {
+            orderId,
+            phoneNo: phoneNumber,
+            amount: amount,
+            transactionUrl: result.secure_url,
+            paymentMethod: "MTN",
+          },
+        });
+
+        // Update order payment status
+        await prisma.orders.update({
+          where: { orderId },
+          data: {
+            paymentStatus: "PAID",
+            orderStatus: "DELIVERING",
+          },
+        });
+
+        // Reduce stock for each product
+        for (const item of order.orderItems) {
+          await prisma.products.update({
+            where: { prodId: item.productId },
+            data: {
+              stock: {
+                decrement: item.quantity,
+              },
+            },
+          });
+        }
+
+        return newTransaction;
+      });
+
       res.json({
         success: true,
         paymentType: "MTN",
         data: result.secure_url,
+        transaction: transaction,
       });
     } else {
       res.status(400).json({

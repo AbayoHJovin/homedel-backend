@@ -31,12 +31,13 @@ function createRefreshToken(userId) {
   );
 }
 
-function sendAccessToken(req, res, accessToken, isAdmin) {
+function sendAccessToken(req, res, accessToken, isAdmin,safeUser) {
   res.status(200).json({
     accessToken,
     message: "loggedIn",
     isAdmin,
     expiresIn: 3600, // 60 minutes in seconds
+    user: safeUser,
   });
 }
 
