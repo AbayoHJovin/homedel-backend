@@ -146,7 +146,7 @@ const requestToPay = async (req, res) => {
     }
 
     // Check if transaction already exists
-    if (order.transasction) {
+    if (order.transaction) {
       return res.status(400).json({
         success: false,
         error: "This order already has a transaction.",

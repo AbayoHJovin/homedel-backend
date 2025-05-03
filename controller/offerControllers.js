@@ -1,4 +1,5 @@
 const { PrismaClient } = require("@prisma/client");
+const { extractUserId, extractAdminStatus } = require("../auth/tokens");
 const prisma = new PrismaClient();
 exports.addOffer = async (req, res) => {
   const { orderData, userId } = req.body;
@@ -125,8 +126,14 @@ exports.getOffer = async (req, res) => {
       where: { ordererId: userId },
       include: {
         orderItems: {
-          include: {
-            product: true,
+          select: {
+            productId: true,
+            quantity: true,
+            product: {
+              select: {
+                prodId: true,
+              },
+            },
           },
         },
         transaction: true,
@@ -172,6 +179,7 @@ exports.getOffer = async (req, res) => {
   }
 };
 
+
 exports.approveOffer = async (req, res) => {
   const { offerId } = req.query;
 
@@ -191,6 +199,31 @@ exports.approveOffer = async (req, res) => {
     return res.status(400).json({ error: e.message || "Something went wrong" });
   }
 };
+
+exports.changeOrderStatus = async (req, res) => {
+  const { orderId, status } = req.body;
+  const token = req.cookies.adminAuth;
+ try {
+    if (!token) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+    const isAdmin = extractAdminStatus(token);
+    if (!isAdmin) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    if (!orderId || !status) throw new Error("Order ID and status are required");
+
+    const updatedOrder = await prisma.orders.update({
+      where: { orderId: orderId },
+      data: { orderStatus: status },
+    });
+
+    return res.status(200).json({ message: "Order status updated successfully", order: updatedOrder });
+  } catch (e) {
+    console.error(e);
+    return res.status(400).json({ error: e.message || "Something went wrong" });
+  }
+};  
 
 exports.declineOffer = async (req, res) => {
   const { offerId } = req.query;

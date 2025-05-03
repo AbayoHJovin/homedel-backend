@@ -99,7 +99,7 @@ app.use((err, req, res, next) => {
     status: "error",
     message:
       process.env.NODE_ENV === "production"
-        ? "Internal server error"
+        ? "The request source is not authorized"
         : err.message,
   });
 });

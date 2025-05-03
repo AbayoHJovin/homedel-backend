@@ -1,16 +1,17 @@
 const bcrypt = require("bcrypt");
 const lodash = require("lodash");
-const crypto = require('crypto');
+const crypto = require("crypto");
 const axios = require("axios");
 const otpGenerator = require("otp-generator");
 const nodemailer = require("nodemailer");
 const { PrismaClient } = require("@prisma/client");
-const cloudinary= require("cloudinary").v2
+const cloudinary = require("cloudinary").v2;
 const {
   createAccessToken,
   createRefreshToken,
   sendAccessToken,
   sendRefreshToken,
+  extractUserId,
 } = require("../auth/tokens");
 const isAuth = require("../auth/isAuth");
 require("dotenv").config();
@@ -78,7 +79,7 @@ exports.loginUser = async (req, res) => {
     const refreshToken = createRefreshToken(user.userId);
     user.refreshToken = refreshToken;
     sendRefreshToken(res, refreshToken);
-    sendAccessToken(req, res, accessToken, isAdmin,safeUser);
+    sendAccessToken(req, res, accessToken, isAdmin, safeUser);
     return;
   } catch (err) {
     res.status(500).json({ message: err.message || "Internal server error" });
@@ -97,13 +98,24 @@ exports.getUserDetails = async (req, res) => {
   }
 };
 
-const streamifier = require("streamifier"); 
+const streamifier = require("streamifier");
 
 exports.updateUserDetails = async (req, res) => {
   const userId = req.body.userId;
   const { username, email } = req.body;
-
+  const token = req.cookies.accessToken;
   try {
+    if (!token) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const cookiesUserId = extractUserId(token);
+    if (cookiesUserId !== userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    if (cookiesUserId !== userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
     if (!username || !email) {
       throw new Error("Please provide both username and email");
     }
@@ -113,15 +125,21 @@ exports.updateUserDetails = async (req, res) => {
     if (req.file) {
       profilePictureUrl = await new Promise((resolve, reject) => {
         const uploadStream = cloudinary.uploader.upload_stream(
-          { folder: "profile_pictures" }, 
+          { folder: "profile_pictures" },
           (error, result) => {
             if (error) return reject(error);
-            resolve(result.secure_url); 
+            resolve(result.secure_url);
           }
         );
 
         streamifier.createReadStream(req.file.buffer).pipe(uploadStream);
       });
+    }
+    const isUserAvailable = await prisma.users.findUnique({
+      where: { email: email },
+    });
+    if (isUserAvailable) {
+      return res.status(404).json({ error: "Email already exists" });
     }
 
     const updatedUser = await prisma.users.update({
@@ -140,7 +158,9 @@ exports.updateUserDetails = async (req, res) => {
     });
   } catch (err) {
     if (err.code === "P2025") {
-      return res.status(404).json({ success: false, message: "User not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
     res.status(500).json({
       success: false,
@@ -151,6 +171,23 @@ exports.updateUserDetails = async (req, res) => {
 
 exports.getCurrentUser = async (req, res) => {
   const token = req.headers.token;
+  const cookiesToken = req.cookies.accessToken;
+  if (!token) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  // Check if cookiesToken exists before trying to extract user ID
+  if (!cookiesToken) {
+    return res
+      .status(401)
+      .json({ error: "Unauthorized - No access token in cookies" });
+  }
+
+  const cookiesUserId = extractUserId(cookiesToken);
+  const userId = extractUserId(token);
+  if (cookiesUserId !== userId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
   let isAdmin = false;
   try {
     const userId = isAuth(token);
@@ -177,6 +214,7 @@ exports.getCurrentUser = async (req, res) => {
 
 exports.logOut = (req, res) => {
   res.clearCookie("refreshToken", { path: "/refresh_token" });
+  res.clearCookie("accessToken", { path: "/" });
   return res.send({ message: "Logged out" });
 };
 
@@ -195,13 +233,13 @@ exports.checkUserEmail = async (req, res) => {
       return res.status(404).json({ message: "Email not found" });
     }
 
-    return res.status(200).json({ 
-      success: true, 
-      message: "Email verified" 
+    return res.status(200).json({
+      success: true,
+      message: "Email verified",
     });
   } catch (error) {
-    return res.status(500).json({ 
-      message: "Error checking email" 
+    return res.status(500).json({
+      message: "Error checking email",
     });
   }
 };
@@ -218,21 +256,23 @@ exports.forgotPassword = async (req, res) => {
     }
 
     // Generate reset token
-    const resetToken = crypto.randomBytes(32).toString('hex');
+    const resetToken = crypto.randomBytes(32).toString("hex");
     const resetTokenExpiry = new Date(Date.now() + 3600000); // 1 hour validity
 
     // Update user with reset token
     await prisma.users.update({
-      where: { 
-        email: email // Using email since it's @unique
+      where: {
+        email: email, // Using email since it's @unique
       },
       data: {
         resetToken: resetToken,
-        resetTokenExpiry: resetTokenExpiry
-      }
+        resetTokenExpiry: resetTokenExpiry,
+      },
     });
 
-    const resetUrl = `https://homedel-jov.vercel.app/update-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
+    const resetUrl = `https://homedel-jov.vercel.app/update-password?token=${resetToken}&email=${encodeURIComponent(
+      email
+    )}`;
     const cancelUrl = `https://homedel-jov.vercel.app/cancel-reset?token=${resetToken}`;
 
     // Email configuration
@@ -276,13 +316,13 @@ exports.forgotPassword = async (req, res) => {
       `,
     });
 
-    return res.status(200).json({ 
-      message: "Password reset instructions sent to your email" 
+    return res.status(200).json({
+      message: "Password reset instructions sent to your email",
     });
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ 
-      message: "Failed to send reset instructions" 
+    return res.status(500).json({
+      message: "Failed to send reset instructions",
     });
   }
 };
@@ -308,45 +348,79 @@ exports.checkOldPassword = async (req, res) => {
 };
 
 exports.updatePassword = async (req, res) => {
-  const { token, email, newPassword } = req.body;
+  const { oldPassword, newPassword, confirmPassword } = req.body;
+  const authHeader = req.headers.authorization;
+
+  const token = authHeader.split(" ")[1];
+  const cookiesToken = req.cookies.accessToken;
+  const cookiesUserId = extractUserId(cookiesToken);
+  const userId = extractUserId(token);
 
   try {
-    const user = await prisma.users.findFirst({
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({
+        message: "Authorization header missing or malformed",
+      });
+    }
+    if (!token || !cookiesToken) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    if (cookiesUserId !== userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const user = await prisma.users.findUnique({
       where: {
-        email,
-        resetToken: token,
-        resetTokenExpiry: {
-          gt: new Date() // Check if token hasn't expired
-        }
-      }
+        userId: userId,
+      },
     });
 
     if (!user) {
-      return res.status(400).json({ 
-        message: "Invalid or expired reset token" 
+      return res.status(404).json({
+        message: "User not found",
       });
     }
 
+    // Verify old password
+    const isPasswordValid = await bcrypt.compare(oldPassword, user.password);
+    if (!isPasswordValid) {
+      return res.status(400).json({
+        message: "Incorrect old password",
+      });
+    }
+
+    // Check if newPassword matches confirmPassword
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({
+        message: "New password and confirmation do not match",
+      });
+    }
+
+    // Hash new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
+    // Update user's password
     await prisma.users.update({
-      where: { 
-        email: email 
+      where: {
+        userId: userId,
       },
       data: {
         password: hashedPassword,
-        resetToken: null,
-        resetTokenExpiry: null
-      }
+      },
     });
 
-    return res.status(200).json({ 
-      message: "Password updated successfully" 
+    return res.status(200).json({
+      message: "Password updated successfully",
     });
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ 
-      message: "Error updating password" 
+    if (error.message === "Invalid or expired token") {
+      return res.status(401).json({
+        message: "Invalid or expired token",
+      });
+    }
+    return res.status(500).json({
+      message: "Error updating password",
     });
   }
 };

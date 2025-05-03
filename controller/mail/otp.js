@@ -144,5 +144,7 @@ exports.logOut = (req, res) => {
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production"
   });
+  res.clearCookie("refreshToken", { path: "/refresh_token" });
+  res.clearCookie("accessToken", { path: "/" });
   return res.status(200).json({ message: "Logged out successfully" });
 };
